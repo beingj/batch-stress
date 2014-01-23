@@ -1,0 +1,192 @@
+#+Title: batch stress
+#+Author: Zhang Bin-jie
+#+Email: zhang.bin-jie@inventec.com
+#+DATE: 2014/1/23
+#+LANGUAGE: en
+#+OPTIONS: num:2
+# #+OPTIONS: num:nil
+
+#+OPTIONS: ^:{}
+#+OPTIONS: \n:t
+#+OPTIONS: toc:2
+# #+OPTIONS: toc:nil
+
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="style.css" />
+
+* Introduction
+** Requirement
+1. All tests listed below must be ran for all SUTs (more than 50)
+1. All tests must collect logs and check failure
+
+** Test items
+1. Install OS
+1. Run performance before stress
+1. Run stress
+1. Run performance after stress
+1. Run DC
+1. Run reboot
+
+** Plan
+1. Install PXE server in one of the SUTs
+1. Install OS for all other SUTs with this PXE server
+1. Install pssh in the PXE server and control other SUTs
+1. Make a nfs share folder in the PXE server and copy all tools and scripts to this folder
+1. All SUTs(including the PXE server) mount this share folder
+1. All SUTs run scripts from the share folder and make sure the logs are stored in the sub folder named by SN in the share folder
+1. Add a check in DC/reboot script: if download a stop file from a ftp server (a notebook other than any SUT) successfully, stop, otherwise, continue
+   
+* Install PXE server
+** Mount ISO
+1. Boot to BIOS setup. Config BMC network: static, 192.168.0.100, 255.255.255.0
+1. Config your notebook network: static, 192.168.0.10, 255.255.255.0
+1. Open IE and goto 192.168.0.100. Login with admin/admin. Click "Console"
+1. Click the DVD icon. Click "broswer..." after DVD. Select rhel 5.7 iso. Click "connect"
+1. Reboot SUT and boot from this DVD device
+
+** Install OS
+1. Install OS with the virtual DVD
+1. Install pssh rpm
+   
+** Setup PXE server
+1. Config DHCP server
+1. Config tftp server
+1. Config nfs server
+1. Copy iso and mount
+1. Edit ks file
+1. Config BMC IP source back to DHCP if the default is DHCP
+
+* Install OS for SUTs via PXE
+1. Scan BMC IP and save to bmc.ip.log
+1. Send IPMI commands to each BMC IP to set boot devic to PXE and reboot:
+    #+BEGIN_SRC sh
+    for i in $(cat bmc.ip.log);do
+        echo -n "$i => "
+        ipmitool -H $i -U admin -P admin chassis bootdev pxe
+        ipmitool -H $i -U admin -P admin power reset
+    done 
+    #+END_SRC
+1. Check SUT boot to PXE and start installation. Installation may take more than 1 hours depend on PXE server and number of SUT
+1. Scan OS IP and save to os.ip.log after all SUT finished OS installation
+1. Copy ssh key to SUT via scp.exp
+1. Check all SUTs are booted to OS
+    #+BEGIN_SRC sh
+    pssh -t 10 -i -h os.ip.log 'uname -a'
+    #+END_SRC
+
+* Prepare before test
+** PXE server
+1. Copy all tools and scripts to a folder: /root/logs
+1. Edit /etc/exports to include this folder:
+    #+BEGIN_SRC sh
+    /root/logs *(rw,no_root_squash,insecure) 
+    #+END_SRC
+1. Start/Restart nfs server
+    #+BEGIN_SRC sh
+    service nfs restart
+    #+END_SRC
+
+** SUT
+1. Mount this nfs share folder for each SUT
+    #+BEGIN_SRC sh
+    pssh -t 10 -i -h os.ip.log 'mount -t nfs 192.168.0.1:/root/logs /tmp/log' 
+    #+END_SRC
+
+* Run stress
+** Run performance
+1. Start performance
+    #+BEGIN_SRC sh
+    pssh -t 10 -i -h os.ip.log 'nohup &>out.txt bash /tmp/log/perf.sh &' 
+    #+END_SRC
+1. Check performance done
+    - It takes about half an hour
+    - HDD LED will stop blink when done
+    - no fio running:
+        #+BEGIN_SRC sh
+        pssh -t 10 -i -h os.ip.log 'ps ax|grep fio' 
+        #+END_SRC
+1. Collect performance logs
+    #+BEGIN_SRC sh
+    cd /tmp/log/
+    zip -r $(date +"%Y-%m%d-%H%M%S")-perf.zip 4F*/perf/*.log
+    #+END_SRC
+1. Check performance logs
+    #+BEGIN_SRC sh
+    bash check-all.sh 
+    bash check-all.sh > $(date +"%Y-%m%d-%H%M%S")-perf-fail.log 
+    rm -fr 4F*
+    #+END_SRC
+   
+** Run stress
+1. Start stress
+    #+BEGIN_SRC sh
+    pssh -t 10 -i -h os.ip.log 'nohup &>out.txt bash /tmp/log/stress.sh &' 
+    #+END_SRC
+1. Stop stress
+    #+BEGIN_SRC sh
+    pssh -t 10 -i -h os.ip.log 'killall ptu' 
+    pssh -t 10 -i -h os.ip.log 'killall bash' 
+    pssh -t 10 -i -h os.ip.log 'killall stream' 
+    pssh -t 10 -i -h os.ip.log 'killall fio' 
+    pssh -t 10 -i -h os.ip.log 'ps ax|grep ptu' 
+    pssh -t 10 -i -h os.ip.log 'ps ax|grep stream' 
+    pssh -t 10 -i -h os.ip.log 'ps ax|grep fio' 
+    #+END_SRC
+1. Collect stress logs
+    #+BEGIN_SRC sh
+    cd /tmp/log/
+    zip -r $(date +"%Y-%m%d-%H%M%S")-stress.zip 4F*/*/*.log
+    #+END_SRC
+1. Check stress logs
+    #+BEGIN_SRC sh
+    bash check-all.sh 
+    bash check-all.sh > $(date +"%Y-%m%d-%H%M%S")-stress-fail.log 
+    rm -fr 4F*
+    #+END_SRC
+   
+** Run performance again
+1. Start performance
+1. Check performance done
+1. Collect performance logs
+1. Check performance logs
+    
+* Run DC
+** Start DC
+#+BEGIN_SRC sh
+pssh -t 10 -i -h os.ip.log 'nohup &>out.txt bash /tmp/log/dc.sh &' 
+#+END_SRC
+
+** Stop DC
+1. Connect your notebook to the network and put a stop file on ftp server.
+1. Collect DC logs
+    #+BEGIN_SRC sh
+    cd /tmp/log/
+    zip -r $(date +"%Y-%m%d-%H%M%S")-dc.zip 4F*/*/*.log
+    #+END_SRC
+1. Check DC logs
+    #+BEGIN_SRC sh
+    bash check-all.sh 
+    bash check-all.sh > $(date +"%Y-%m%d-%H%M%S")-dc-fail.log 
+    rm -fr 4F*
+    #+END_SRC
+
+* Run reboot
+** Start reboot
+#+BEGIN_SRC sh
+pssh -t 10 -i -h os.ip.log 'nohup &>out.txt bash /tmp/log/reboot.sh &' 
+#+END_SRC
+
+** Stop reboot
+1. Connect your notebook to the network and put a stop file on ftp server.
+1. Collect reboot logs
+    #+BEGIN_SRC sh
+    cd /tmp/log/
+    zip -r $(date +"%Y-%m%d-%H%M%S")-reboot.zip 4F*/*/*.log
+    #+END_SRC
+1. Check reboot logs
+    #+BEGIN_SRC sh
+    bash check-all.sh 
+    bash check-all.sh > $(date +"%Y-%m%d-%H%M%S")-reboot-fail.log 
+    rm -fr 4F*
+    #+END_SRC
+
+------------------------------

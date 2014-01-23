@@ -1,0 +1,25 @@
+#!/usr/bin/expect -f
+
+set ipf os.ip.log
+set f [open $ipf]
+set lines [read $f]
+close $f
+
+foreach ip [split $lines "\n"] {
+    set ip [string trim $ip]
+    if {$ip == "" || [string index $ip 0] == "#"} {
+        puts "invalid ip: $ip"
+        continue
+    }
+    puts "scp key to $ip"
+   #continue
+    set password 111111
+catch {
+    spawn scp -r /root/.ssh/ $ip:/root
+    expect {
+        "*yes/no" {send "yes\r"; exp_continue}
+        "*password:" {send "$password\r"}
+    }
+    interact
+}
+}
