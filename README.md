@@ -1,1 +1,1 @@
-refer to batch-stress.html
+refer to batch-stress.org
